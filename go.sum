@@ -1,2 +1,4 @@
 github.com/LegendaryLlama37/api_consumer_concurrent v0.0.0-20240325034545-1e51bdae52e2 h1:dK0+KacjZ4kSgr/6udjJeGU2K7E8TdB9uYukFIka/3o=
 github.com/LegendaryLlama37/api_consumer_concurrent v0.0.0-20240325034545-1e51bdae52e2/go.mod h1:F//WWblqFkOtSFMianPVRw0ZlwlM7srKmA2juxEbwIM=
+github.com/LegendaryLlama37/api_consumer_concurrent v0.0.0-20240325174833-d86d7b2c216c h1:CU+WjcnlIJSmitkBJx6TfcgRXW7CAClOsB3reAQiuG4=
+github.com/LegendaryLlama37/api_consumer_concurrent v0.0.0-20240325174833-d86d7b2c216c/go.mod h1:F//WWblqFkOtSFMianPVRw0ZlwlM7srKmA2juxEbwIM=

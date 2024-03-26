@@ -1,76 +1,93 @@
 package main
 
 import (
-
-  "github.com/LegendaryLlama37/api_consumer_concurrent/apiquery"
-	//"encoding/json"
 	"fmt"
-	//"net/http"
-	"os"
+	"log"
+	"regexp"
+	"strings"
 	"time"
+
+	"github.com/LegendaryLlama37/api_consumer_concurrent/apiquery"
 )
 
 const (
-	instanceURL = "https://ServiceNowInstance.service-now.com/"
+	prodInstanceURL  = "https://prod-instance.service-now.com/api/now/table/release"
+	devInstanceURL   = "https://dev-instance.service-now.com/api/now/table/update_set"
+	apiKeyProd        = "your_production_api_key"
+	apiKeyDev         = "your_dev_api_key"
+	updateSetSearch   = ""
+	updateSetAgeLimit = 14 * 24 * time.Hour         // Update set age limit (2 weeks)
 )
 
 func main() {
-	// Fetch credentials from environment variables
-	username := os.Getenv("SN_USERNAME")
-	password := os.Getenv("SN_PASSWORD")
-	if username == "" || password == "" {
-		fmt.Println("Please provide ServiceNow username and password as environment variables (SN_USERNAME and SN_PASSWORD)")
-		return
+	// Define URLs and API keys for concurrent fetching
+	urlAPIKeyMap := map[string]string{
+		prodInstanceURL: apiKeyProd,
+		devInstanceURL:  apiKeyDev,
 	}
 
-	// Fetch releases assigned to a user
-	releases := getReleasesAssignedToUser("user1", username, password)
-	for _, release := range releases.Result {
-		fmt.Printf("Release Number: %s\n", release.Number)
-		stories := getStoriesInRelease(release.SysID,  username, password)
-		for _, story := range stories.Result {
-			fmt.Printf(" Story Number: %s - %s\n", story.Number, story.Name)
-		}
-		fmt.Println()
-	}
-
-	// Get completed update sets within the last two weeks
-	updateSets := getCompletedUpdateSetWithinTwoWeeks(username, password)
-	fmt.Println("Completed Update Sets within the last two weeks:")
-	for _, updateSet := range updateSets.Result {
-		fmt.Printf("Update Set ID: %s\n", updateSet.SysID)
-	}
-}
-
-func getReleasesAssignedToUser(user, username, password string) apiquery.Release {
-	url := fmt.Sprintf("%s/api/now/table/rm_release_scrum?sysparm_query=assigned_to=%s", instanceURL, user)
-	return queryServiceNowAPI(url, username, password)
-}
-
-
-func getStoriesInRelease(releaseID, username, password string) apiquery.Story {
-	url := fmt.Sprintf("%s/api/now/table/rm_story?sysparm_query=releases=%s", instanceURL, releaseID)
-	return queryServiceNowAPI(url, username, password)
-}
-
-
-func getCompletedUpdateSetWithinTwoWeeks(username, password string) apiquery.UpdateSet {
-	now := time.Now()
-	twoWeeksAgo := now.AddDate(0, 0, -14)
-	formattedTwoWeeksAgo := twoWeeksAgo.Format("2006-01-02 15:04:05")
-
-	url := fmt.Sprintf("%s/api/now/table/sys_update_set?sysparm_query=complete=true^sys_updated_on>=javascript:gs.dateGenerate('%s')", instanceURL, formattedTwoWeeksAgo)
-	return queryServiceNowAPI(url, username, password)
-}
-
-
-func queryServiceNowAPI(url, username, password string) interface{} {
-	credentials := apiquery.Credentials{APIKey: ""}
-	results, err := apiquery.FetchData(url, credentials)
+	// Fetch data from both instances concurrently
+	dataMap, err := apiquery.FetchDataConcurrently(urlAPIKeyMap)
 	if err != nil {
-		fmt.Printf("Error fetching data from ServiceNow API: %v\n", err)
-		return nil
+		log.Fatal(err)
 	}
-	return results
+
+	// Extract releases from production data
+	prodReleases, ok := dataMap[prodInstanceURL].([]map[string]interface{})
+	if !ok {
+		log.Fatal("Error parsing production release data")
+	}
+
+	// Loop through releases and search for update sets in dev instance
+	for _, release := range prodReleases {
+		releaseName := release["name"].(string)
+		fmt.Printf("Searching update sets for release: %s\n", releaseName)
+
+		// Extract story numbers from release data (assuming "short_description" contains story numbers)
+		storyNumbers := extractStoryNumbers(release["short_description"].(string))
+
+		updateSets := searchDevUpdateSets(storyNumbers, dataMap[devInstanceURL])
+		if updateSets == nil {
+			log.Printf("Error searching update sets for release %s\n", releaseName)
+			continue
+		}
+
+		// Print update sets that match story numbers and are within age limit
+		printMatchingUpdateSets(updateSets)
+	}
+}
+
+func extractStoryNumbers(description string) []string {
+	// Extract story numbers using a regular expression (STRY- format)
+	storyNumberRegex := regexp.MustCompile(`STRY-[A-Z0-9]+`)
+	matches := storyNumberRegex.FindAllString(description, -1)
+	return matches
+}
+
+func searchDevUpdateSets(storyNumbers []string, devData interface{}) []map[string]interface{} {
+	twoWeeksAgo := time.Now().Add(-updateSetAgeLimit)
+	filter := fmt.Sprintf("sys_created_on>=%s^opened^released", twoWeeksAgo.Format("2006-01-02"))
+
+	// Iterate through dev update sets and filter based on story numbers and criteria
+	var matchingSets []map[string]interface{}
+	for _, updateSet := range devData.([]map[string]interface{}) {
+		updateSetName := updateSet["name"].(string)
+		if updateSet["sys_created_on"].(string) >= twoWeeksAgo.Format("2006-01-02T15:04:05") {
+			for _, storyNumber := range storyNumbers {
+				if strings.Contains(updateSetName, storyNumber) {
+					matchingSets = append(matchingSets, updateSet)
+					break // Move to next update set after finding a match
+				}
+			}
+		}
+	}
+	return matchingSets
+}
+
+func printMatchingUpdateSets(updateSets []map[string]interface{}) {
+	for _, updateSet := range updateSets {
+		updateSetName := updateSet["name"].(string)
+		fmt.Printf("  - Update Set: %s\n", updateSetName)
+	}
 }
 
